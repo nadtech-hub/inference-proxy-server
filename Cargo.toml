@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 actix-web = "4.11.0"
-tokio-cron-scheduler = "0.14.0"
+tokio = { version = "1.47.1", features = ["sync", "rt"]}
 dotenvy = "0.15.7"
 url = "2.5.4"
 reqwest = { version = "0.12.22", features = ["json"] }
@@ -14,3 +14,5 @@ futures = "0.3.31"
 bytes = "1.10.1" 
 env_logger = "0.11.8"
 log = "0.4.27"
+serde = { version = "1.0.219", features = ["derive"] }
+validator = { version = "0.20.0", features = ["derive"] }

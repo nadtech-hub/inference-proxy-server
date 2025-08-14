@@ -1,30 +1,28 @@
-use crate::JOB_SCHEDULER;
-use crate::app_cfg::AppCfg;
 use crate::cache_manager::{add_inputs, get_inputs};
 use crate::forward_req::forward;
+use crate::models::{AppCfg, InputBody, OutputBody};
 use actix_web::{
     HttpRequest, HttpResponse, dev::PeerAddr, http::StatusCode as ActixStatusCode, web,
 };
+use futures::future::join_all;
 use reqwest::{Client, StatusCode};
 use std::str::FromStr;
+use std::sync::{Arc, RwLock};
 use std::time::Instant;
-use std::{
-    io::{Error, ErrorKind},
-    sync::{Arc, RwLock},
-    time::Duration,
-};
-use tokio_cron_scheduler::Job;
+use tokio::time::sleep;
 
 pub async fn handle_req(
-    req: HttpRequest,
-    payload: web::Json<Vec<String>>,
+    _req: HttpRequest,
+    payload: web::Json<InputBody>,
     peer_addr: Option<PeerAddr>,
     http_client: web::Data<Client>,
+    app_cfg: web::Data<AppCfg>,
 ) -> std::io::Result<HttpResponse> {
     let now = Instant::now();
-    let inputs = payload.0.clone();
-    let app_cfg_inner = req.app_data::<AppCfg>().unwrap();
-    let delay = (*app_cfg_inner.max_wait_time).clone();
+    let inputs = payload.inputs.clone();
+    let app_cfg = app_cfg.get_ref().clone();
+    let delay = (*app_cfg.max_wait_time).clone();
+    let _max_batch_size = (*app_cfg.max_batch_size).clone();
 
     let mut status_code = ActixStatusCode::from_u16(StatusCode::BAD_REQUEST.as_u16()).unwrap();
     if inputs.len() == 0 {
@@ -32,59 +30,55 @@ pub async fn handle_req(
         return Ok(resp);
     }
 
+    let outputs = Arc::new(RwLock::new(Vec::<Vec<f64>>::new()));
     let ip = peer_addr.clone().unwrap().0.ip().to_string();
-    // let peer_addr = peer_addr.clone().unwrap();
-    // let ip_addr = peer_addr.0.ip().clone();
-    // let ip = Box::new(ip_addr.to_string()).into_boxed_str();
-
     let res = add_inputs(String::from_str(ip.as_str()).unwrap(), inputs);
-    if res.0 == 0 {
+    log::info!("ITEMS ADDED {res:?}");
+
+    if res.0 > 0 && res.0 == res.1 {
+        let inputs = get_inputs(ip.as_str());
+        let mut handles = Vec::new();
+        let dur = tokio::time::Duration::from_secs(delay);
+
+        for input in inputs.into_iter() {
+            let ip = ip.clone();
+            let app_cfg_cloned = app_cfg.clone();
+            let http_client_cloned = http_client.as_ref().clone();
+            let outputs_cloned = outputs.clone();
+            let i = input.clone();
+
+            let handle = tokio::spawn(async move {
+                sleep(dur).await;
+                match forward(
+                    ip.as_str(),
+                    app_cfg_cloned,
+                    i,
+                    &http_client_cloned,
+                    outputs_cloned,
+                )
+                .await
+                {
+                    Ok(_) => {
+                        log::info!("Input sent successfully")
+                    }
+                    Err(err) => {
+                        log::error!("Failed to sent input. Reason: {err:?}")
+                    }
+                }
+            });
+            handles.push(handle);
+        }
+        let _ = join_all(handles).await;
+        let outputs = outputs.read().unwrap();
+        status_code = ActixStatusCode::from_u16(StatusCode::OK.as_u16()).unwrap();
+        let resp = HttpResponse::build(status_code).json(OutputBody {
+            outputs: outputs.to_vec(),
+        });
+        return Ok(resp);
+    } else if res.0 == 0 && res.1 == 0 {
         status_code = ActixStatusCode::from_u16(StatusCode::CONFLICT.as_u16()).unwrap();
         let res = HttpResponse::build(status_code).finish();
         return Ok(res);
-    } else if res.0 == res.1 {
-        let sched_cell = JOB_SCHEDULER.get().unwrap();
-        let outputs = Arc::new(RwLock::new(Vec::<u64>::new()));
-        let inputs = get_inputs(ip.as_str());
-        let _res = match sched_cell.write() {
-            Ok(sched) => {
-                for input in inputs.into_iter() {
-                    let ip = ip.clone();
-                    let app_cfg_cloned = app_cfg_inner.clone();
-                    let http_client_cloned = http_client.as_ref().clone();
-                    let outputs_cloned = outputs.clone();
-
-                    let locked_job =
-                        Job::new_one_shot_async(Duration::from_secs(delay), move |_uuid, _l| {
-                            Box::pin({
-                                let ip = ip.clone().to_string();
-                                let ac = app_cfg_cloned.clone();
-                                let hc = http_client_cloned.clone();
-                                let o = outputs_cloned.clone();
-                                let i = input.clone();
-
-                                async move {
-                                    match forward(ip.as_str(), ac, i, &hc, o).await {
-                                        Ok(_) => {
-                                            log::info!("Input sent successfully")
-                                        }
-                                        Err(err) => {
-                                            log::error!("Failed to sent input. Reason: {err}")
-                                        }
-                                    }
-                                }
-                            })
-                        })
-                        .map_err(|e| Error::new(ErrorKind::Other, e))?;
-                    let _ = sched.add(locked_job).await;
-                }
-            }
-            Err(_err) => {
-                status_code = ActixStatusCode::from_u16(StatusCode::CONFLICT.as_u16()).unwrap();
-                let res = HttpResponse::build(status_code).finish();
-                return Ok(res);
-            }
-        };
     }
 
     status_code = ActixStatusCode::from_u16(StatusCode::ACCEPTED.as_u16()).unwrap();

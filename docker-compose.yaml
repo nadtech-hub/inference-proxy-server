@@ -12,4 +12,4 @@ services:
   hugging-face:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
     ports:
-      - "8090:8090"
+      - "8090:80"

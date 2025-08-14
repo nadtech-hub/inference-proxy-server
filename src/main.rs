@@ -2,22 +2,21 @@ use actix_web::{App, HttpServer, web};
 use std::collections::HashMap;
 use std::env;
 use std::io::{Error, ErrorKind};
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
-use tokio_cron_scheduler::JobScheduler;
 use reqwest::Client;
 
-pub mod app_cfg;
+pub mod models;
 pub mod cache_manager;
 pub mod forward_req;
-//mod body_validator;
 mod req_handler;
-use app_cfg::AppCfg;
+use models::AppCfg;
 use req_handler::handle_req;
 
 pub static REQUEST_MAP: OnceLock<RwLock<HashMap<String, Vec<String>>>> =
     OnceLock::new();
-pub static JOB_SCHEDULER: OnceLock<RwLock<JobScheduler>> = OnceLock::new();
+//pub static CURR_BATCH_SIZE: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
 const EMBED_PATH: &str = "/embed";
 
 #[actix_web::main]
@@ -39,20 +38,15 @@ async fn main() -> std::io::Result<()> {
     inference_service_url = inference_service_url + EMBED_PATH;
 
     // instantiate job scheduler and request map
-    let scheduler = JobScheduler::new()
-        .await
-        .map_err(|e| Error::new(ErrorKind::Other, e))?;
     let m = HashMap::<String, Vec<String>>::new();
-    let req_rw_lock = RwLock::new(m);
-    let sched_rw_lock = RwLock::new(scheduler);
-
+    let req_rw_lock = RwLock::new(m);    
     // encapsulate map and scheduler in cell
     REQUEST_MAP
         .set(req_rw_lock)
         .map_err(|_| Error::new(ErrorKind::Other, "Couldn't instantiate a map of requests"))?;
-    JOB_SCHEDULER
-        .set(sched_rw_lock)
-        .map_err(|_| Error::new(ErrorKind::Other, "Couldn't instantiate a job scheduler"))?;
+    
+    //let sz_rw_lock = AtomicU64::new(0);
+    //CURR_BATCH_SIZE.set(sz_rw_lock).map_err(|_| Error::new(ErrorKind::Other, "Couldn't instantiate batch size"))?;
 
     // start server
     HttpServer::new(move || {
@@ -63,9 +57,9 @@ async fn main() -> std::io::Result<()> {
         };
         App::new()
             .app_data(web::Data::new(Client::default()))
+            .app_data(web::Data::new(app_cfg))
             .service(
-                web::resource("/")
-                    .app_data(web::Data::new(app_cfg))
+                web::resource(EMBED_PATH)
                     .route(web::post().to(handle_req)),
             )
     })

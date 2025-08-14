@@ -1,0 +1,15 @@
+version: '3'
+services:
+  backend:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      MAX_WAIT_TIME_SEC: 5
+      MAX_BATCH_SIZE: 5
+      INFERENCE_SERVICE_URI: 127.0.0.1:8090
+
+  hugging-face:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
+    ports:
+      - "8090:8090"

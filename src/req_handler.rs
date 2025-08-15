@@ -26,7 +26,7 @@ pub async fn handle_req(
 
     let mut status_code =
         ActixStatusCode::from_u16(StatusCode::TOO_MANY_REQUESTS.as_u16()).unwrap();
-    if curr_val > max_batch_size  {
+    if curr_val > max_batch_size {
         cnt_lock.store(0, Ordering::Release);
         let resp = HttpResponse::build(status_code).finish();
         return Ok(resp);
@@ -45,7 +45,7 @@ pub async fn handle_req(
 
     let ip = peer_addr.clone().unwrap().0.ip().to_string();
     let res = add_inputs(String::from_str(ip.as_str()).unwrap(), inputs);
-    
+
     if res.0 > 0 && res.0 == res.1 {
         let handle = tokio::spawn(async move {
             let dur = tokio::time::Duration::from_secs(delay);
@@ -83,6 +83,8 @@ pub async fn handle_req(
                 handles.push(handle);
             }
             let _ = join_all(handles).await;
+            let cnt_lock = REQ_COUNTER.get().unwrap();
+            cnt_lock.store(0, Ordering::Release);
             outputs
         });
         let outputs_res = handle.await?;

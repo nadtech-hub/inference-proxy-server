@@ -1,15 +1,36 @@
-version: '3'
+version: '3.8'
 services:
   backend:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: inference-proxy-server
     ports:
       - "8080:8080"
+    depends_on:
+      - huggingfacetei
     environment:
-      MAX_WAIT_TIME_SEC: 5
+      RUST_LOG: info
+      MAX_WAIT_TIME_SEC: 10
       MAX_BATCH_SIZE: 5
-      INFERENCE_SERVICE_URI: 127.0.0.1:8090
+      INFERENCE_SERVICE_URI: http://huggingfacetei:3000
+    networks:
+      - app-network
 
-  hugging-face:
+  huggingfacetei:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
+    command: --model-id nomic-ai/nomic-embed-text-v1.5
     ports:
-      - "8090:80"
+      - "3000:3000"
+    environment:
+      - CORS_ALLOW_ORIGIN=http://0.0.0.0:8080
+      - PORT=3000
+      - MAX_CLIENT_BATCH_SIZE=512
+    volumes:
+      - ./embedding:/data
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge

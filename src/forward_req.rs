@@ -2,7 +2,8 @@ use crate::models::AppCfg;
 use reqwest::{Client, Method};
 use std::{
     io::{Error, ErrorKind},
-    sync::{Arc, RwLock}, time::Instant,
+    sync::{Arc, RwLock},
+    time::Instant,
 };
 
 pub async fn forward(
@@ -13,7 +14,6 @@ pub async fn forward(
     outputs: Arc<RwLock<Vec<Vec<f64>>>>,
 ) -> std::io::Result<()> {
     let url = app_cfg.inference_service_url.clone();
-    log::info!("URL {url:?}");
     let mut forwarded_req = client.request(Method::POST, url);
 
     forwarded_req = forwarded_req.header("x-forwarded-for", ip);
@@ -26,7 +26,7 @@ pub async fn forward(
       "truncation_direction": "Right"
     });
     forwarded_req = forwarded_req.json(&payload);
-    
+
     let now = Instant::now();
     let res = forwarded_req
         .send()

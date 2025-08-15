@@ -1,22 +1,21 @@
 use actix_web::{App, HttpServer, web};
+use reqwest::Client;
 use std::collections::HashMap;
 use std::env;
 use std::io::{Error, ErrorKind};
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
-use reqwest::Client;
 
-pub mod models;
 pub mod cache_manager;
 pub mod forward_req;
+pub mod models;
 mod req_handler;
 use models::AppCfg;
 use req_handler::handle_req;
 
-pub static REQUEST_MAP: OnceLock<RwLock<HashMap<String, Vec<String>>>> =
-    OnceLock::new();
-//pub static CURR_BATCH_SIZE: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
+pub static REQUEST_MAP: OnceLock<RwLock<HashMap<String, Vec<String>>>> = OnceLock::new();
+pub static REQ_COUNTER: OnceLock<AtomicU64> = OnceLock::new();
 const EMBED_PATH: &str = "/embed";
 
 #[actix_web::main]
@@ -39,14 +38,16 @@ async fn main() -> std::io::Result<()> {
 
     // instantiate job scheduler and request map
     let m = HashMap::<String, Vec<String>>::new();
-    let req_rw_lock = RwLock::new(m);    
+    let req_rw_lock = RwLock::new(m);
     // encapsulate map and scheduler in cell
     REQUEST_MAP
         .set(req_rw_lock)
         .map_err(|_| Error::new(ErrorKind::Other, "Couldn't instantiate a map of requests"))?;
-    
-    //let sz_rw_lock = AtomicU64::new(0);
-    //CURR_BATCH_SIZE.set(sz_rw_lock).map_err(|_| Error::new(ErrorKind::Other, "Couldn't instantiate batch size"))?;
+
+    let sz_rw_lock = AtomicU64::new(0);
+    REQ_COUNTER
+        .set(sz_rw_lock)
+        .map_err(|_| Error::new(ErrorKind::Other, "Couldn't instantiate req counter"))?;
 
     // start server
     HttpServer::new(move || {
@@ -58,14 +59,12 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(web::Data::new(Client::default()))
             .app_data(web::Data::new(app_cfg))
-            .service(
-                web::resource(EMBED_PATH)
-                    .route(web::post().to(handle_req)),
-            )
+            .service(web::resource(EMBED_PATH).route(web::post().to(handle_req)))
     })
-    .workers(2)
+    .workers(1)
     .keep_alive(Duration::from_secs(0))
-    .bind(("127.0.0.1", 8080))?
+    .max_connections(max_batch_size_parsed as usize)
+    .bind("0.0.0.0:8080")?
     .run()
     .await
 }
